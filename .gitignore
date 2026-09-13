@@ -1,0 +1,7 @@
+# Compiled output (build it locally with Build-KTSToolkitExe.ps1)
+KTS-Toolkit.exe
+
+# Runtime data - never belongs in the repo
+*.log
+*.tmp
+/reports/
