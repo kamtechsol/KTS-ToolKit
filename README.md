@@ -86,17 +86,21 @@ powershell -ExecutionPolicy Bypass -File .\Install-KTSDiagTool.ps1
 ```
 
 This installs to `C:\Program Files\KamTech\DiagTool` and registers three
-SYSTEM scheduled tasks:
+scheduled tasks **scoped to the account you install as** (not SYSTEM, not
+all users) — they only run while that user is logged on:
 
 | Task | Trigger | What it does |
 |---|---|---|
-| **KTS Boot Check** | 2 min after every boot | Quick inventory + NIC/power audit + event scan |
-| **KTS Watchdog** | Every 5 minutes, always | Checks link status + ping; on the *first* sign of trouble, immediately kicks off a 10-min live capture (`-Mode NetworkOnly`) so the incident gets caught with detail |
+| **KTS Boot Check** | 2 min after you log on | Quick inventory + NIC/power audit + event scan |
+| **KTS Watchdog** | Every 5 minutes while logged in | Checks link status + ping; on the *first* sign of trouble, immediately kicks off a 10-min live capture (`-Mode NetworkOnly`) so the incident gets caught with detail |
 | **KTS Weekly Deep Scan** | Sunday 2:00 AM | Full diagnostic + 10-min stress test + 15-min network monitor |
 
-It also adds Start Menu shortcuts under **KamTech Solutions** (Run Quick
-Check, Run Full Diagnostic, Open Reports Folder, Uninstall) and a normal
-Add/Remove Programs entry.
+It also adds shortcuts to **your** Start Menu (KamTech Solutions folder:
+Run Quick Check, Run Full Diagnostic, Open Reports Folder, KTS Toolkit,
+Uninstall) and puts a **KTS Toolkit** shortcut on your Desktop, then
+**automatically launches the KTS Toolkit GUI** as soon as install finishes
+so you get immediate visible confirmation it worked. Pass `-NoAutoLaunch`
+to skip that.
 
 Skip the watchdog task if you only want boot + weekly checks:
 ```powershell

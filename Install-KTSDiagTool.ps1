@@ -4,17 +4,20 @@
  Install-KTSDiagTool.ps1
  KamTech Solutions - installer for KTS-DiagTool
 
- Installs KTS-DiagTool.ps1 + KTSWatchdog.ps1 as a proper Windows-resident
- utility:
-   - Copies files to Program Files\KamTech\DiagTool
-   - Registers 3 scheduled tasks (SYSTEM):
-       * KTS Boot Check      - Quick mode, 2 min after every boot
+ Installs KTS-DiagTool.ps1 + KTSWatchdog.ps1 as a Windows-resident utility
+ scoped to the CURRENT user (the admin running this installer) - not SYSTEM,
+ not all users:
+   - Copies files to Program Files\KamTech\DiagTool (shared program files,
+     needs admin to write - this part is unavoidable)
+   - Registers 3 scheduled tasks under the current user account, set to run
+     only while that user is logged on:
+       * KTS Boot Check      - Quick mode, 2 min after this user logs on
        * KTS Watchdog        - every 5 min, auto-captures on a detected drop
        * KTS Weekly Deep Scan- Full mode, Sunday 02:00
-   - Adds Start Menu shortcuts (Run Quick Check, Run Full Diagnostic,
-     Open Reports Folder, Uninstall)
-   - Registers an Add/Remove Programs entry so it can be removed the normal
-     way, in addition to Uninstall-KTSDiagTool.ps1
+   - Adds shortcuts to THIS user's Start Menu and Desktop (not All Users)
+   - Registers a per-user (HKCU) Add/Remove Programs entry
+   - Auto-launches the KTS Toolkit GUI as soon as install finishes, so
+     there's immediate visible confirmation it worked
 
  Run from the folder containing KTS-DiagTool.ps1, KTSWatchdog.ps1, and
  Uninstall-KTSDiagTool.ps1:
@@ -26,6 +29,7 @@
 param(
     [string]$InstallPath = 'C:\Program Files\KamTech\DiagTool',
     [switch]$SkipWatchdog,
+    [switch]$NoAutoLaunch,
     # Set by the compiled Setup.exe (NSIS), which registers its own
     # Add/Remove Programs entry and its own Uninstall.exe - so this script
     # shouldn't also write a separate uninstall registry key in that case.
@@ -33,13 +37,20 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
-$SourceDir   = Split-Path -Parent $MyInvocation.MyCommand.Path
-$ProgDataDir = 'C:\ProgramData\KamTech'
-$ReportsDir  = "$ProgDataDir\Reports"
-$StartMenuDir = "$env:ProgramData\Microsoft\Windows\Start Menu\Programs\KamTech Solutions"
-$KTSVersion  = '1.0.0'
+$SourceDir    = Split-Path -Parent $MyInvocation.MyCommand.Path
+$ProgDataDir  = 'C:\ProgramData\KamTech'
+$ReportsDir   = "$ProgDataDir\Reports"
+$KTSVersion   = '1.0.0'
+
+# Current user = whoever is running this elevated install (via UAC, their own
+# token is still used - $env:USERNAME resolves to them, not to a different
+# admin account), which is who every task/shortcut below gets scoped to.
+$CurrentUser    = "$env:USERDOMAIN\$env:USERNAME"
+$StartMenuDir   = Join-Path ([Environment]::GetFolderPath('StartMenu')) 'Programs\KamTech Solutions'
+$DesktopDir     = [Environment]::GetFolderPath('Desktop')
 
 Write-Host "== KamTech Solutions - KTS-DiagTool installer v$KTSVersion ==" -ForegroundColor Cyan
+Write-Host "Installing for current user: $CurrentUser"
 
 # ------------------------------------------------------------------------------
 # 1. Copy files
@@ -64,13 +75,16 @@ if ($hasExe) {
 }
 Write-Host "Copied tool files to $InstallPath"
 
-# ------------------------------------------------------------------------------
-# 2. Scheduled tasks (all run as SYSTEM so they work with no user logged on)
-# ------------------------------------------------------------------------------
 $diagScript     = Join-Path $InstallPath 'KTS-DiagTool.ps1'
 $watchdogScript = Join-Path $InstallPath 'KTSWatchdog.ps1'
-$principal      = New-ScheduledTaskPrincipal -UserId 'SYSTEM' -LogonType ServiceAccount -RunLevel Highest
-$settings       = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable
+$toolkitGui     = Join-Path $InstallPath 'KTS-Toolkit-GUI.ps1'
+$toolkitExe     = Join-Path $InstallPath 'KTS-Toolkit.exe'
+
+# ------------------------------------------------------------------------------
+# 2. Scheduled tasks - current user only, only fire while that user is logged on
+# ------------------------------------------------------------------------------
+$principal = New-ScheduledTaskPrincipal -UserId $CurrentUser -LogonType Interactive -RunLevel Highest
+$settings  = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable
 
 function Register-KTSTask {
     param($Name, $Action, $Trigger)
@@ -79,23 +93,23 @@ function Register-KTSTask {
     }
     Register-ScheduledTask -TaskName $Name -Action $Action -Trigger $Trigger `
         -Principal $principal -Settings $settings -Description 'KamTech Solutions diagnostic tool' | Out-Null
-    Write-Host "Registered scheduled task: $Name"
+    Write-Host "Registered scheduled task: $Name (user: $CurrentUser)"
 }
 
-# Boot check - Quick mode, 2 min after boot
+# Boot check - Quick mode, 2 min after THIS user logs on
 $bootAction  = New-ScheduledTaskAction -Execute 'powershell.exe' `
     -Argument "-ExecutionPolicy Bypass -WindowStyle Hidden -File `"$diagScript`" -Mode Quick"
-$bootTrigger = New-ScheduledTaskTrigger -AtStartup
+$bootTrigger = New-ScheduledTaskTrigger -AtLogOn -User $CurrentUser
 $bootTrigger.Delay = 'PT2M'
 Register-KTSTask -Name 'KTS Boot Check' -Action $bootAction -Trigger $bootTrigger
 
-# Weekly deep scan - Full mode, Sunday 02:00
+# Weekly deep scan - Full mode, Sunday 02:00 (only runs if this user is logged on then)
 $weeklyAction  = New-ScheduledTaskAction -Execute 'powershell.exe' `
     -Argument "-ExecutionPolicy Bypass -WindowStyle Hidden -File `"$diagScript`" -Mode Full -NetworkMonitorMinutes 15 -StressDurationMinutes 10"
 $weeklyTrigger = New-ScheduledTaskTrigger -Weekly -DaysOfWeek Sunday -At 2:00AM
 Register-KTSTask -Name 'KTS Weekly Deep Scan' -Action $weeklyAction -Trigger $weeklyTrigger
 
-# Resident watchdog - every 5 minutes
+# Resident watchdog - every 5 minutes while this user is logged on
 if (-not $SkipWatchdog) {
     $wdAction  = New-ScheduledTaskAction -Execute 'powershell.exe' `
         -Argument "-ExecutionPolicy Bypass -WindowStyle Hidden -File `"$watchdogScript`""
@@ -106,52 +120,58 @@ if (-not $SkipWatchdog) {
 }
 
 # ------------------------------------------------------------------------------
-# 3. Start Menu shortcuts
+# 3. Shortcuts - THIS user's Start Menu AND Desktop (not All Users)
 # ------------------------------------------------------------------------------
 New-Item -ItemType Directory -Path $StartMenuDir -Force | Out-Null
 $wsh = New-Object -ComObject WScript.Shell
 
 function New-KTSShortcut {
-    param($Name, $TargetArgs)
-    $sc = $wsh.CreateShortcut((Join-Path $StartMenuDir "$Name.lnk"))
-    $sc.TargetPath = 'powershell.exe'
+    param($Folder, $Name, $TargetPath, $TargetArgs, $IconLocation)
+    $sc = $wsh.CreateShortcut((Join-Path $Folder "$Name.lnk"))
+    $sc.TargetPath = $TargetPath
     $sc.Arguments  = $TargetArgs
     $sc.WorkingDirectory = $InstallPath
-    $sc.IconLocation = 'powershell.exe,0'
+    $sc.IconLocation = $IconLocation
     $sc.Save()
 }
 
-New-KTSShortcut -Name 'Run Quick Check'      -TargetArgs "-ExecutionPolicy Bypass -NoExit -File `"$diagScript`" -Mode Quick"
-New-KTSShortcut -Name 'Run Full Diagnostic'  -TargetArgs "-ExecutionPolicy Bypass -NoExit -File `"$diagScript`" -Mode Full"
-New-KTSShortcut -Name 'Open Reports Folder'  -TargetArgs "-Command `"Invoke-Item '$ReportsDir'`""
-New-KTSShortcut -Name 'Uninstall'            -TargetArgs "-ExecutionPolicy Bypass -File `"$InstallPath\Uninstall-KTSDiagTool.ps1`""
+New-KTSShortcut -Folder $StartMenuDir -Name 'Run Quick Check' -TargetPath 'powershell.exe' `
+    -TargetArgs "-ExecutionPolicy Bypass -NoExit -File `"$diagScript`" -Mode Quick" -IconLocation 'powershell.exe,0'
+New-KTSShortcut -Folder $StartMenuDir -Name 'Run Full Diagnostic' -TargetPath 'powershell.exe' `
+    -TargetArgs "-ExecutionPolicy Bypass -NoExit -File `"$diagScript`" -Mode Full" -IconLocation 'powershell.exe,0'
+New-KTSShortcut -Folder $StartMenuDir -Name 'Open Reports Folder' -TargetPath 'powershell.exe' `
+    -TargetArgs "-Command `"Invoke-Item '$ReportsDir'`"" -IconLocation 'powershell.exe,0'
+New-KTSShortcut -Folder $StartMenuDir -Name 'Uninstall' -TargetPath 'powershell.exe' `
+    -TargetArgs "-ExecutionPolicy Bypass -File `"$InstallPath\Uninstall-KTSDiagTool.ps1`"" -IconLocation 'powershell.exe,0'
 
 # KTS Toolkit launcher: prefer the compiled .exe (no console window, double-
 # clickable, UAC-prompts itself) - fall back to launching the GUI script
-# directly through PowerShell if the exe wasn't built yet.
-$toolkitShortcut = $wsh.CreateShortcut((Join-Path $StartMenuDir 'KTS Toolkit.lnk'))
+# directly through PowerShell if the exe wasn't built yet. Placed in BOTH
+# the Start Menu and the Desktop.
 if ($hasExe) {
-    $toolkitShortcut.TargetPath = Join-Path $InstallPath 'KTS-Toolkit.exe'
-    $toolkitShortcut.Arguments = ''
+    $toolkitTarget = $toolkitExe
+    $toolkitArgs   = ''
+    $toolkitIcon   = $toolkitExe
 } else {
-    $toolkitShortcut.TargetPath = 'powershell.exe'
-    $toolkitShortcut.Arguments = "-ExecutionPolicy Bypass -WindowStyle Hidden -File `"$(Join-Path $InstallPath 'KTS-Toolkit-GUI.ps1')`""
+    $toolkitTarget = 'powershell.exe'
+    $toolkitArgs   = "-ExecutionPolicy Bypass -WindowStyle Hidden -File `"$toolkitGui`""
+    $toolkitIcon   = 'powershell.exe,0'
 }
-$toolkitShortcut.WorkingDirectory = $InstallPath
-$toolkitShortcut.IconLocation = if ($hasExe) { (Join-Path $InstallPath 'KTS-Toolkit.exe') } else { 'powershell.exe,0' }
-$toolkitShortcut.Save()
+New-KTSShortcut -Folder $StartMenuDir -Name 'KTS Toolkit' -TargetPath $toolkitTarget -TargetArgs $toolkitArgs -IconLocation $toolkitIcon
+New-KTSShortcut -Folder $DesktopDir   -Name 'KTS Toolkit' -TargetPath $toolkitTarget -TargetArgs $toolkitArgs -IconLocation $toolkitIcon
 
-Write-Host "Created Start Menu shortcuts under 'KamTech Solutions'"
+Write-Host "Created Start Menu shortcuts under 'KamTech Solutions' for $CurrentUser"
+Write-Host "Created Desktop shortcut: KTS Toolkit"
 if (-not $hasExe) {
     Write-Host "NOTE: KTS-Toolkit.exe wasn't found next to the installer - 'KTS Toolkit' currently launches the GUI via PowerShell. Run Build-KTSToolkitExe.ps1 and re-run the installer to switch it to the compiled .exe." -ForegroundColor Yellow
 }
 
 # ------------------------------------------------------------------------------
-# 4. Add/Remove Programs entry (skipped when the compiled Setup.exe installed
-#    this - it registers its own entry pointing at its own Uninstall.exe)
+# 4. Add/Remove Programs entry - per-user (HKCU), skipped when the compiled
+#    Setup.exe installed this (it registers its own machine-wide entry).
 # ------------------------------------------------------------------------------
 if (-not $SkipRegistryEntry) {
-    $uninstallKey = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\KTSDiagTool'
+    $uninstallKey = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\KTSDiagTool'
     New-Item -Path $uninstallKey -Force | Out-Null
     Set-ItemProperty -Path $uninstallKey -Name 'DisplayName'     -Value 'KTS-DiagTool (KamTech Solutions)'
     Set-ItemProperty -Path $uninstallKey -Name 'DisplayVersion'  -Value $KTSVersion
@@ -160,7 +180,7 @@ if (-not $SkipRegistryEntry) {
     Set-ItemProperty -Path $uninstallKey -Name 'UninstallString' -Value "powershell.exe -ExecutionPolicy Bypass -File `"$InstallPath\Uninstall-KTSDiagTool.ps1`""
     Set-ItemProperty -Path $uninstallKey -Name 'NoModify'        -Value 1 -Type DWord
     Set-ItemProperty -Path $uninstallKey -Name 'NoRepair'        -Value 1 -Type DWord
-    Write-Host 'Registered Add/Remove Programs entry.'
+    Write-Host 'Registered per-user Add/Remove Programs entry.'
 } else {
     Write-Host 'Skipping Add/Remove Programs entry (owned by Setup.exe).'
 }
@@ -168,5 +188,18 @@ if (-not $SkipRegistryEntry) {
 Write-Host "`n== Install complete ==" -ForegroundColor Green
 Write-Host "Tool:      $InstallPath"
 Write-Host "Reports:   $ReportsDir"
-Write-Host "Watchdog:  $(if ($SkipWatchdog) { 'not installed' } else { 'every 5 min, auto-captures on drop' })"
-Write-Host "Run a first check now with:  Start Menu > KamTech Solutions > Run Quick Check"
+Write-Host "User:      $CurrentUser (all scheduled tasks/shortcuts are scoped to this account only)"
+Write-Host "Watchdog:  $(if ($SkipWatchdog) { 'not installed' } else { 'every 5 min while logged in, auto-captures on drop' })"
+
+# ------------------------------------------------------------------------------
+# 5. Auto-launch the toolkit right now, so install success is immediately visible
+# ------------------------------------------------------------------------------
+if (-not $NoAutoLaunch) {
+    Write-Host 'Launching KTS Toolkit...'
+    try {
+        Start-Process -FilePath $toolkitTarget -ArgumentList $toolkitArgs
+    } catch {
+        Write-Host "Could not auto-launch the toolkit: $($_.Exception.Message)" -ForegroundColor Yellow
+        Write-Host "Launch it manually from the Desktop or Start Menu shortcut 'KTS Toolkit'."
+    }
+}

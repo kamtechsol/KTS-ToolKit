@@ -4,9 +4,9 @@
  Uninstall-KTSDiagTool.ps1
  KamTech Solutions - removes the KTS-DiagTool installation
 
- Removes scheduled tasks, Start Menu shortcuts, and the Add/Remove Programs
- entry. Reports already generated are kept by default (pass -PurgeReports
- to delete them too).
+ Removes the current user's scheduled tasks, Start Menu + Desktop shortcuts,
+ and the per-user Add/Remove Programs entry. Reports already generated are
+ kept by default (pass -PurgeReports to delete them too).
 ================================================================================
 #>
 
@@ -25,12 +25,19 @@ foreach ($task in @('KTS Boot Check','KTS Weekly Deep Scan','KTS Watchdog')) {
     }
 }
 
-$startMenuDir = "$env:ProgramData\Microsoft\Windows\Start Menu\Programs\KamTech Solutions"
+$startMenuDir = Join-Path ([Environment]::GetFolderPath('StartMenu')) 'Programs\KamTech Solutions'
 if (Test-Path $startMenuDir) {
     Remove-Item $startMenuDir -Recurse -Force
     Write-Host 'Removed Start Menu shortcuts.'
 }
 
+$desktopShortcut = Join-Path ([Environment]::GetFolderPath('Desktop')) 'KTS Toolkit.lnk'
+if (Test-Path $desktopShortcut) {
+    Remove-Item $desktopShortcut -Force
+    Write-Host 'Removed Desktop shortcut.'
+}
+
+Remove-Item 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\KTSDiagTool' -Force
 Remove-Item 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\KTSDiagTool' -Force
 Write-Host 'Removed Add/Remove Programs entry.'
 
