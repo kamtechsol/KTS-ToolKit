@@ -25,7 +25,11 @@
 
 param(
     [string]$InstallPath = 'C:\Program Files\KamTech\DiagTool',
-    [switch]$SkipWatchdog
+    [switch]$SkipWatchdog,
+    # Set by the compiled Setup.exe (NSIS), which registers its own
+    # Add/Remove Programs entry and its own Uninstall.exe - so this script
+    # shouldn't also write a separate uninstall registry key in that case.
+    [switch]$SkipRegistryEntry
 )
 
 $ErrorActionPreference = 'Stop'
@@ -143,18 +147,23 @@ if (-not $hasExe) {
 }
 
 # ------------------------------------------------------------------------------
-# 4. Add/Remove Programs entry
+# 4. Add/Remove Programs entry (skipped when the compiled Setup.exe installed
+#    this - it registers its own entry pointing at its own Uninstall.exe)
 # ------------------------------------------------------------------------------
-$uninstallKey = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\KTSDiagTool'
-New-Item -Path $uninstallKey -Force | Out-Null
-Set-ItemProperty -Path $uninstallKey -Name 'DisplayName'     -Value 'KTS-DiagTool (KamTech Solutions)'
-Set-ItemProperty -Path $uninstallKey -Name 'DisplayVersion'  -Value $KTSVersion
-Set-ItemProperty -Path $uninstallKey -Name 'Publisher'       -Value 'KamTech Solutions'
-Set-ItemProperty -Path $uninstallKey -Name 'InstallLocation' -Value $InstallPath
-Set-ItemProperty -Path $uninstallKey -Name 'UninstallString' -Value "powershell.exe -ExecutionPolicy Bypass -File `"$InstallPath\Uninstall-KTSDiagTool.ps1`""
-Set-ItemProperty -Path $uninstallKey -Name 'NoModify'        -Value 1 -Type DWord
-Set-ItemProperty -Path $uninstallKey -Name 'NoRepair'        -Value 1 -Type DWord
-Write-Host 'Registered Add/Remove Programs entry.'
+if (-not $SkipRegistryEntry) {
+    $uninstallKey = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\KTSDiagTool'
+    New-Item -Path $uninstallKey -Force | Out-Null
+    Set-ItemProperty -Path $uninstallKey -Name 'DisplayName'     -Value 'KTS-DiagTool (KamTech Solutions)'
+    Set-ItemProperty -Path $uninstallKey -Name 'DisplayVersion'  -Value $KTSVersion
+    Set-ItemProperty -Path $uninstallKey -Name 'Publisher'       -Value 'KamTech Solutions'
+    Set-ItemProperty -Path $uninstallKey -Name 'InstallLocation' -Value $InstallPath
+    Set-ItemProperty -Path $uninstallKey -Name 'UninstallString' -Value "powershell.exe -ExecutionPolicy Bypass -File `"$InstallPath\Uninstall-KTSDiagTool.ps1`""
+    Set-ItemProperty -Path $uninstallKey -Name 'NoModify'        -Value 1 -Type DWord
+    Set-ItemProperty -Path $uninstallKey -Name 'NoRepair'        -Value 1 -Type DWord
+    Write-Host 'Registered Add/Remove Programs entry.'
+} else {
+    Write-Host 'Skipping Add/Remove Programs entry (owned by Setup.exe).'
+}
 
 Write-Host "`n== Install complete ==" -ForegroundColor Green
 Write-Host "Tool:      $InstallPath"
