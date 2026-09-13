@@ -4,18 +4,21 @@
 ;
 ; Produces a single, real Windows executable (KTS-Toolkit-Setup.exe) that:
 ;   - Prompts for admin elevation (UAC) on launch
-;   - Extracts all tool files to Program Files\KamTech\DiagTool
+;   - Extracts the tool to Program Files\KamTech\DiagTool
 ;   - Runs Install-KTSDiagTool.ps1 to register scheduled tasks (boot check,
-;     watchdog, weekly deep scan), Start Menu shortcuts, and the KTS Toolkit
-;     GUI launcher
+;     watchdog, weekly deep scan) and shortcuts for the current user
 ;   - Registers a normal Add/Remove Programs entry with its own uninstaller
+;
+; The installed tool itself (KTS-Toolkit.ps1, or KTS-Toolkit.exe if you ran
+; Build-KTSToolkitExe.ps1 first) is ONE application - engine and GUI in a
+; single process, no separate script files invoked at runtime.
 ;
 ; Built with makensis (NSIS - Nullsoft Scriptable Install System):
 ;   makensis KTS-Toolkit-Setup.nsi
 ; ==============================================================================
 
 !define PRODUCT_NAME      "KTS Toolkit"
-!define PRODUCT_VERSION   "1.0.0"
+!define PRODUCT_VERSION   "1.1.0"
 !define PRODUCT_PUBLISHER "KamTech Solutions"
 !define PRODUCT_DIR_REGKEY "Software\Microsoft\Windows\CurrentVersion\Uninstall\KTSToolkit"
 
@@ -40,17 +43,19 @@ BrandingText "${PRODUCT_PUBLISHER}"
 Section "KTS Toolkit (required)" SEC01
   SectionIn RO
   SetOutPath "$INSTDIR"
-  File "KTS-DiagTool.ps1"
-  File "KTS-Toolkit-GUI.ps1"
+  File "KTS-Toolkit.ps1"
   File "KTSWatchdog.ps1"
   File "Install-KTSDiagTool.ps1"
   File "Uninstall-KTSDiagTool.ps1"
   File "Build-KTSToolkitExe.ps1"
   File "README.md"
   File "LICENSE"
+  ; Only bundled if Build-KTSToolkitExe.ps1 was run before makensis - not
+  ; required, the tool runs fine as the raw .ps1 via the shortcuts below too.
+  File /nonfatal "KTS-Toolkit.exe"
 
-  DetailPrint "Registering scheduled tasks, watchdog, and shortcuts..."
-  nsExec::ExecToLog 'powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$INSTDIR\Install-KTSDiagTool.ps1" -InstallPath "$INSTDIR" -SkipRegistryEntry'
+  DetailPrint "Registering scheduled tasks, watchdog, and shortcuts (current user)..."
+  nsExec::ExecToLog 'powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$INSTDIR\Install-KTSDiagTool.ps1" -InstallPath "$INSTDIR" -SkipRegistryEntry -NoAutoLaunch'
   Pop $0
   DetailPrint "Install-KTSDiagTool.ps1 exit code: $0"
 
@@ -63,6 +68,15 @@ Section "KTS Toolkit (required)" SEC01
   WriteRegStr HKLM "${PRODUCT_DIR_REGKEY}" "InstallLocation" "$INSTDIR"
   WriteRegDWORD HKLM "${PRODUCT_DIR_REGKEY}" "NoModify" 1
   WriteRegDWORD HKLM "${PRODUCT_DIR_REGKEY}" "NoRepair" 1
+
+  ; Launch the app once setup finishes, so success is immediately visible -
+  ; prefer the compiled exe if it was bundled, else fall back to the script.
+  IfFileExists "$INSTDIR\KTS-Toolkit.exe" 0 UseScriptFallback
+    Exec '"$INSTDIR\KTS-Toolkit.exe"'
+    Goto LaunchDone
+  UseScriptFallback:
+    Exec 'powershell.exe -ExecutionPolicy Bypass -WindowStyle Hidden -File "$INSTDIR\KTS-Toolkit.ps1"'
+  LaunchDone:
 SectionEnd
 
 Section "Uninstall"
@@ -70,8 +84,7 @@ Section "Uninstall"
   nsExec::ExecToLog 'powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$INSTDIR\Uninstall-KTSDiagTool.ps1" -InstallPath "$INSTDIR"'
   Pop $0
 
-  Delete "$INSTDIR\KTS-DiagTool.ps1"
-  Delete "$INSTDIR\KTS-Toolkit-GUI.ps1"
+  Delete "$INSTDIR\KTS-Toolkit.ps1"
   Delete "$INSTDIR\KTS-Toolkit.exe"
   Delete "$INSTDIR\KTSWatchdog.ps1"
   Delete "$INSTDIR\Install-KTSDiagTool.ps1"

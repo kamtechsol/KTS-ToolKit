@@ -6,14 +6,15 @@
 
  Runs on a short interval (as a scheduled task, not a long-lived loop) and:
    - Checks primary NIC link status + quick ping loss
-   - On the FIRST sign of trouble, immediately kicks off a bounded
-     KTS-DiagTool.ps1 -Mode NetworkOnly capture so the drop gets caught
-     with detail even if nobody is watching the machine
+   - On the FIRST sign of trouble, launches the KTS Toolkit application
+     itself (visibly, minimized) with -AutoRun NetworkOnly so the drop gets
+     caught with detail even if nobody is watching the machine - this still
+     opens only the ONE application, not a separate hidden script process
    - Writes a lightweight running log so patterns over days/weeks are visible
      without digging through full report folders
 
- Installed by Install-KTSDiagTool.ps1 as a SYSTEM scheduled task, default
- every 5 minutes.
+ Installed by Install-KTSDiagTool.ps1 as a scheduled task tied to the
+ installing user's account, every 5 minutes while that user is logged on.
 ================================================================================
 #>
 
@@ -23,10 +24,11 @@ param(
     [int]$RearmMinutes = 30
 )
 
-$InstallDir   = 'C:\Program Files\KamTech\DiagTool'
-$WatchdogLog  = 'C:\ProgramData\KamTech\watchdog.log'
-$LockFile     = 'C:\ProgramData\KamTech\watchdog.lock'
-$DiagScript   = Join-Path $InstallDir 'KTS-DiagTool.ps1'
+$InstallDir    = 'C:\Program Files\KamTech\DiagTool'
+$WatchdogLog   = 'C:\ProgramData\KamTech\watchdog.log'
+$LockFile      = 'C:\ProgramData\KamTech\watchdog.lock'
+$ToolkitExe    = Join-Path $InstallDir 'KTS-Toolkit.exe'
+$ToolkitScript = Join-Path $InstallDir 'KTS-Toolkit.ps1'
 
 function Write-WDLog {
     param([string]$Message)
@@ -55,15 +57,16 @@ if ($linkOk) {
 }
 
 if (-not $linkOk -or -not $pingOk) {
-    Write-WDLog "TROUBLE DETECTED - link=$linkOk ping=$pingOk. Triggering ${CaptureMinutesOnTrigger}min capture."
+    Write-WDLog "TROUBLE DETECTED - link=$linkOk ping=$pingOk. Launching KTS Toolkit for a ${CaptureMinutesOnTrigger}min capture."
     New-Item -ItemType File -Path $LockFile -Force | Out-Null
 
-    if (Test-Path $DiagScript) {
+    if (Test-Path $ToolkitExe) {
+        Start-Process -FilePath $ToolkitExe -ArgumentList "-AutoRun NetworkOnly -AutoRunMinutes $CaptureMinutesOnTrigger -StartMinimized"
+    } elseif (Test-Path $ToolkitScript) {
         Start-Process -FilePath 'powershell.exe' `
-            -ArgumentList "-ExecutionPolicy Bypass -File `"$DiagScript`" -Mode NetworkOnly -NetworkMonitorMinutes $CaptureMinutesOnTrigger" `
-            -WindowStyle Hidden
+            -ArgumentList "-ExecutionPolicy Bypass -File `"$ToolkitScript`" -AutoRun NetworkOnly -AutoRunMinutes $CaptureMinutesOnTrigger -StartMinimized"
     } else {
-        Write-WDLog "ERROR: KTS-DiagTool.ps1 not found at $DiagScript - capture skipped."
+        Write-WDLog "ERROR: KTS-Toolkit not found in $InstallDir - capture skipped."
     }
 } else {
     Write-WDLog 'OK - link up, ping normal.'
